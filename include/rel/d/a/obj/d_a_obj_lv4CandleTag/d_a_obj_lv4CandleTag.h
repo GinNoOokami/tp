@@ -11,7 +11,7 @@ struct unknown {
 
 // dalv4CandleTag_c should inherit fopAc_ac_c, unknown, and dEvLib_callback_c
 // but this causes issues with weak function ordering
-class dalv4CandleTag_c : public fopAc_ac_c {
+class dalv4CandleTag_c : public fopAc_ac_c, public unknown, public dEvLib_callback_c {
 public:
     enum Mode {
         MODE_WATCH,
@@ -20,13 +20,8 @@ public:
         MODE_END,
     };
 
-    // dalv4CandleTag_c() : dEvLib_callback_c(this) {}
-    ~dalv4CandleTag_c() {}
-
-    // These members are not real, remove once inheritance issue is resolved
-    unknown mBase2;
-    dEvLib_callback_c mBase3;
-    void* mVtable;
+    dalv4CandleTag_c() : dEvLib_callback_c(this) {}
+    virtual ~dalv4CandleTag_c() {}
 
     /* 80C5D4B8 */ void setBaseMtx();
     /* 80C5D4F0 */ cPhs__Step create();
@@ -40,7 +35,7 @@ public:
     /* 80C5D8AC */ void modeNGWait();
     /* 80C5D8FC */ void init_modeEnd();
     /* 80C5D908 */ void modeEnd();
-    /* 80C5D90C */ int eventStart();
+    /* 80C5D90C */ virtual BOOL eventStart();
     /* 80C5D930 */ int Draw();
     /* 80C5D938 */ int Delete();
 
@@ -64,7 +59,7 @@ STATIC_ASSERT(sizeof(dalv4CandleTag_c) == 0x58C);
 class dalv4CandleTag_HIO_c : public mDoHIO_entry_c {
 public:
     /* 80C5D44C */ dalv4CandleTag_HIO_c();
-    /* 80C5D9C0 */ ~dalv4CandleTag_HIO_c() {}
+    /* 80C5D9C0 */ virtual ~dalv4CandleTag_HIO_c() {}
 
     u8 mTimer;
 };

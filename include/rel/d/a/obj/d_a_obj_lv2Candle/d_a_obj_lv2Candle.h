@@ -5,7 +5,8 @@
 #include "d/cc/d_cc_d.h"
 #include "f_op/f_op_actor_mng.h"
 #include "m_Do/m_Do_hostIO.h"
-#include "rel/d/a/obj/d_a_obj_lv4CandleTag/d_a_obj_lv4CandleTag.h"
+
+class dalv4CandleTag_c;
 
 class daLv2Candle_HIO_c : public mDoHIO_entry_c {
 public:
