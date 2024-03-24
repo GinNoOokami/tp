@@ -592,7 +592,7 @@ REGISTER_CTORS(0x80CC44D4, __sinit_d_a_obj_saidan_cpp);
 
 While it may look large and intimidating, this is actually a relatively small actor. Let's examine the main sections of the file:
 
-* Includes: By default, only two headers are included. An empty header specific to the actor, and `dol2asm.h` which is needed for some special defines included by the tool. More will be included as the decompile more of the file.
+* Includes: By default, only two headers are included. An empty header specific to the actor, and `dol2asm.h` which is needed for some special defines included by the tool. Additional headers may be included as we decompile more of the file.
 * Types: Most of these types are just stubs needed for the TU to successfully compile against, and will be removed as you pull in the necessary header files.
 * Forward references: These are the [mangled](https://en.wikipedia.org/wiki/Name_mangling) forward declarations for the symbols defined by the actor. They are necessary for the asm chunks to compile successfully. Can be removed once decomp is complete.
 * External references: These are the mangled external references that are used by the class. Eventually these will all be removed, some sooner than others.
@@ -757,7 +757,7 @@ make: *** [rel/d/a/obj/d_a_obj_saidan/Makefile:47: build/dolzel2/rel/d/a/obj/d_a
 
 </details>
 
-A lot of errors here, but let's focus on one for now. Remember earlier how we said it wouldn't compile because our actor has no data in it? That static assertion is one of those errors. Inheriting the `dBgS_MoveBgActor` class brings the size up to 0x5A0 bytes, but that's just short of the actor's total size of 0x5B4.
+A lot of errors here, but let's focus on one for now. Remember earlier how we said it wouldn't compile because our actor has no data in it? That static assertion is one of those errors. Inheriting the `dBgS_MoveBgActor` class brings the size up to 0x5A0 bytes, but that's just shy of the actor's expected size of 0x5B4.
 
 Most, if not all, actors require a special type of class called `request_of_phase_process_class`. This is used as an internal state machine for resource management. It requires the `SSystem/SComponent/c_phase.h` header, so let's stick that with the rest.
 
@@ -896,17 +896,17 @@ Compiling at this point will introduce a new error.
 #   object 'mDoHIO_entry_c::~mDoHIO_entry_c()' redefined
 ```
 
-So is this just another duplicate method that we can remove? Not quite. To understand why, we'll need to briefly cover what weak functions are and why the destructor of another class showed up to make our decomp adventure that much more more exciting in the first place.
+So is this just another duplicate method that we can remove? Not quite. To understand why, we'll need to briefly cover what weak functions are and why the destructor of another class showed up to derail our decomp adventure in the first place.
 
 ## Weak functions
 
-TODO: Give a brief intro to weak functions
+When the compiler generates multiple definitions of the same method across different TUs, these are referred to as "[weak functions](https://en.wikipedia.org/wiki/Weak_symbol)". It's the linker's job to resolve any duplicate definitions of these so-called weak functions. The virtual destructor of the base `mDoHIO_entry_c` class is one such example of this.
 
-While we've correctly established our inheritance structure for the HIO class, the destructor already has a definition so if we just remove this extra destructor as a way of resolving the error, the compiler won't generate a definition for it. This can be confirmed by commenting out the method, compiling, and then looking at the output in objdiff.
+While we've correctly established our inheritance structure for the HIO class, the destructor already has a definition so if we just remove this extra destructor as a way of resolving the error, the compiler won't generate a definition for it. This can be confirmed by commenting out the destructor, compiling, and then looking at the output in objdiff.
 
 ![Missing HIO destructor](img/missing-hio-destructor.png)
 
-This may or may not matter depending on the TU. A better way to resolve the conflict is to declare it as an `extern` using its mangled name, like so:
+Notice how it's no longer present in the build? Whether this matters depends on the TU. A better way to resolve the conflict is to declare it as an `extern` using its mangled name, like so:
 
 ```C++
 // asm mDoHIO_entry_c::~mDoHIO_entry_c() {
@@ -916,4 +916,117 @@ extern "C" asm void __dt__14mDoHIO_entry_cFv() {
 }
 ```
 
+This strategy can be applied any time you encounter redefinition errors involving these types of weak functions. Just declare it as an extern and use the mangled name to avoid symbol name collisions with weak functions.
+
 With this, we compile and link successfully and all functions are present and in the correct order (but the vtable ordering issues remain).
+
+## Decompiling the first function
+
+So what now? It seems like we're back where we started, but I promise we've made progress. Our HIO class now has the correct inheritance chain and we can begin to correct the vtable ordering. Let's start by adding an empty destructor to see if it matches the compiler generated asm.
+
+```C++
+#if NONMATCHING
+daSaidan_HIO_c::~daSaidan_HIO_c() {}
+#else
+#pragma push
+#pragma optimization_level 0
+#pragma optimizewithasm off
+asm daSaidan_HIO_c::~daSaidan_HIO_c() {
+    nofralloc
+#include "asm/rel/d/a/obj/d_a_obj_saidan/d_a_obj_saidan/__dt__14daSaidan_HIO_cFv.s"
+}
+#pragma pop
+#endif
+```
+
+Notice the `NONMATCHING` define in there? It's a good idea to keep any in-progress work gated behind a define like this. Doing so opens the possibility of checking in partial work while still compiling with a match. It's a common pattern you'll find throughout the early code base, but will become rarer as we near completion. Make sure to add a define somewhere near the top.
+
+```C++
+#define NONMATCHING 1
+```
+
+Did that change anything? Let's recompile and take a look at objdiff.
+
+![Base destructor order is incorrect](img/base-destructor-ordering.png)
+
+Well, at least the empty constructor matches. But the vtable order hasn't changed, and now the base destructor of the HIO class is out of order to boot! While it seems like we may be moving in the wrong direction, similar to [sliding number puzzles](https://en.wikipedia.org/wiki/Sliding_puzzle), things often get more wrong before they get right. Next, let's take care of that constructor.
+
+## Literally floating
+
+Next, let's try disassembling the constructor. Looking at the Ghidra output, seems simple enough.
+
+```C++
+void __thiscall daSaidan_HIO_c::daSaidan_HIO_c(daSaidan_HIO_c *this)
+{
+  this->vtable = (uint32_t)&DAT_80cc4638;
+  this->vtable = (uint32_t)&DAT_80cc462c;
+  this->field1_0x4 = 2.0;
+  this->field2_0x8 = 250.0;
+  return;
+}
+```
+
+Note that because there is a virtual destructor, this object needs a vtable. This happens to occupy the first four bytes in this case, so the first actual field member begins at offset `0x04`. Add those to the structure now.
+
+```C++
+class daSaidan_HIO_c : public mDoHIO_entry_c {
+public:
+    /* 80CC3DAC */ daSaidan_HIO_c();
+    /* 80CC4478 */ virtual ~daSaidan_HIO_c();
+    
+    /* 0x00 vtable */
+    /* 0x04 */ f32 field_0x04;
+    /* 0x08 */ f32 field_0x08;
+```
+
+Ignoring the vtable assignment (the compiler will do this automatically), let's write the constructor definition. Make sure to specify the `f` suffix, otherwise the compiler will assume we're working with doubles.
+
+```C++
+#if NONMATCHING
+daSaidan_HIO_c::daSaidan_HIO_c() {
+    field_0x04 = 2.0f;
+    field_0x08 = 250.0f;
+}
+#else
+```
+
+While this compiles and the generated instructions are correct, there is a problem. In PowerPC architecture (what the GC and Wii use), the floating point registers can generally only load from memory. This means that the compiler stores any floating point literals in the `.rodata` section. Looking up a bit, you can find the literals for these values. Let's try removing them now, so that the compiler can generate them for us.
+
+```C++
+#if !NONMATCHING
+/* 80CC4524-80CC4528 000000 0004+00 2/2 0/0 0/0 .rodata          @3625 */
+SECTION_RODATA static f32 const lit_3625 = 2.0f;
+COMPILER_STRIP_GATE(0x80CC4524, &lit_3625);
+
+/* 80CC4528-80CC452C 000004 0004+00 1/1 0/0 0/0 .rodata          @3626 */
+SECTION_RODATA static f32 const lit_3626 = 250.0f;
+COMPILER_STRIP_GATE(0x80CC4528, &lit_3626);
+#endif
+```
+
+However, we run into errors if we compile now.
+
+```log
+#      10: /* 80CC41DC  3C 60 80 CC */ lis r3, lit_3625@ha /* 0x80CC4524@ha */ 
+#   Error:                                                                    ^
+#   illegal use of label (lit_3625), can only use label difference in this 
+#   context
+### mwcceppc_modded.exe Compiler:
+#      11: /* 80CC41E0  3B E3 45 24 */ addi r31, r3, lit_3625@l /* 0x80CC4524@l */ 
+#   Error:                                                                        ^
+#   illegal use of label (lit_3625), can only use label difference in this 
+#   context
+```
+
+This indicates that we can't remove these just yet because they are being used in other functions that haven't been compiled yet. The compiler will re-use float literals that have already been defined in the TU. It's more efficient of course, but makes decomp trickier.
+
+So what do we do? We could just leave them in place until all functions that share them have been decompiled before finally removing them. We could also try to trick the compiler into using the existing literals by casting them to point directly to them, like so.
+
+```C++
+    field_0x04 = *((f32*)&lit_3625);
+    field_0x08 = *((f32*)&lit_3626);
+```
+
+We can now remove the `NONMATCHING` guard block around this method as well as the `asm` definition. Just keep in mind we'll need to come back and fix this later once we are able to remove these literals after decompiling all functions that use them.
+
+## Resolving the vtable order
