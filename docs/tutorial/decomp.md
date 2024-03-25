@@ -844,7 +844,7 @@ We have more work to do, but what is causing the mismatch anyway? We haven't eve
 
 Opening it up and comparing our results, we can notice a subtle difference in the `.data` section.
 
-![vtable order is different!](img/vtable-ordering.png)
+![vtable order is different!](img/vtable-ordering-1.png)
 
 The vtable ordering is different! This does unfortunately matter when matching, and worse yet is we don't have any direct control over this. The compiler follows a heuristic when populating the `.data` section as it processes the TU, so we must ascertain how the code was originally written and match it. Inlining constructors/destructors can make a difference in the order, and since this involves these mysterious `HIO` classes, let's start with those.
 
@@ -898,11 +898,11 @@ Compiling at this point will introduce a new error.
 
 So is this just another duplicate method that we can remove? Not quite. To understand why, we'll need to briefly cover what weak functions are and why the destructor of another class showed up to derail our decomp adventure in the first place.
 
-## Weak functions
+## The weakest link
 
-When the compiler generates multiple definitions of the same method across different TUs, these are referred to as "[weak functions](https://en.wikipedia.org/wiki/Weak_symbol)". It's the linker's job to resolve any duplicate definitions of these so-called weak functions. The virtual destructor of the base `mDoHIO_entry_c` class is one such example of this.
+When the compiler generates multiple definitions of the same method across different TUs, these are referred to as "[weak functions](https://en.wikipedia.org/wiki/Weak_symbol)". It's the linker's job to resolve any duplicate definitions of these so-called weak functions, and the virtual destructor of the base `mDoHIO_entry_c` class is one such example of these. The compiler generates a copy of it of it in this TU because it's inlined in the base class.
 
-While we've correctly established our inheritance structure for the HIO class, the destructor already has a definition so if we just remove this extra destructor as a way of resolving the error, the compiler won't generate a definition for it. This can be confirmed by commenting out the destructor, compiling, and then looking at the output in objdiff.
+While we've correctly established our inheritance structure for the HIO class, the destructor already has a definition so if we just remove this extra weak destructor as a way of resolving the error, the compiler won't generate a definition for it. This can be confirmed by commenting out the destructor, compiling, and then looking at the output in objdiff.
 
 ![Missing HIO destructor](img/missing-hio-destructor.png)
 
@@ -1029,4 +1029,23 @@ So what do we do? We could just leave them in place until all functions that sha
 
 We can now remove the `NONMATCHING` guard block around this method as well as the `asm` definition. Just keep in mind we'll need to come back and fix this later once we are able to remove these literals after decompiling all functions that use them.
 
-## Resolving the vtable order
+## At last, fixing the vtable order
+
+If we look at the vtable ordering again after these changes, it looks different. However, the order still doesn't quite match up.
+
+![vtable ordering still not quite right](img/vtable-ordering-2.png)
+
+This is where things may require a bit of trial and error. Playing around with the function ordering or inlining certain methods can make a difference. Let's try inlining that destructor in the declaration now, making sure to remove the old definition.
+
+```C++
+    /* 80CC3DAC */ daSaidan_HIO_c();
+    /* 80CC4478 */ virtual ~daSaidan_HIO_c() {}
+```
+
+It worked! The vtables are finally in the right order now.
+
+![alt text](img/vtable-ordering-3.png)
+
+But we're still getting a mismatch. What else could be going on? Now it looks like one of the functions in the `.text` section is out of order. What is this `__sinit_d_a_obj_saidan_cpp` method? Let's dive into the final piece of the puzzle in the next section.
+
+## OK
