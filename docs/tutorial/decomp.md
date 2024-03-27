@@ -1112,3 +1112,7 @@ python3 tools/makerel.py build --string-table build/dolzel2/frameworkF.str @buil
 Success! This actor now matches the output of the ROM, and we can begin to decomp the rest of the actor.
 
 ## The static actor methods
+
+To be continued...
+
+(WIP)
