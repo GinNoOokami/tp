@@ -10,13 +10,13 @@ A basic understanding of C++ will be beneficial to get the most out of this guid
 
 It's important to keep in mind that while many share common patterns and similarities, each actor is different. What may work as a strategy in one may not in another. Decompiling heavily optimized C++ code can be a complex and nuanced process, with dependencies that may not be resolved until part or even all of the [Translation Unit](https://en.wikipedia.org/wiki/Translation_unit_(programming)) (TU) is fully decompiled.
 
-Rather that treat the steps outlined by this guide as a universal strategy which can be applied to any actor, consider it more as a set of loose guidelines that can be used when approaching a new actor.
+Rather than treat the steps outlined by this guide as a universal strategy which can be applied to any actor, consider it more as a set of loose guidelines that can be used when approaching a new actor.
 
 With the preamble out of the way, let's begin!
 
 ## Starting out
 
-This guide will focus on the d_a_obj_saidan actor, which is considered a `rel`. For context, this actor represents the movable altar you find in the sanctuary at Kakariko village. Let's briefly go over some terminology here:
+This guide will focus on the `d_a_obj_saidan` actor, which is considered a `rel`. For context, this actor represents the movable altar you find in the sanctuary at Kakariko village. Let's briefly go over some terminology here:
 
 * Actor: An entity within the game world. This can be an object, the player, an enemy, an npc, or even just a piece of logic. Always extends from the `fopAc_ac_c` base actor class somewhere in the inheritance chain, but there are a few different subclasses of this. We'll explore one of them in this guide.
 * rel: Each actor is represented as a piece of executable code called a "rel". These can be swapped in an out of memory as needed, like [overlays](https://en.wikipedia.org/wiki/Overlay_(programming)).
@@ -1023,11 +1023,11 @@ This indicates that we can't remove these just yet because they are being used i
 So what do we do? We could just leave them in place until all functions that share them have been decompiled before finally removing them. We could also try to trick the compiler into using the existing literals by casting them to point directly to them, like so.
 
 ```C++
-    field_0x04 = *((f32*)&lit_3625);
-    field_0x08 = *((f32*)&lit_3626);
+    field_0x04 = FLOAT_LABEL(lit_3625);
+    field_0x08 = FLOAT_LABEL(lit_3626);
 ```
 
-We can now remove the `NONMATCHING` guard block around this method as well as the `asm` definition. Just keep in mind we'll need to come back and fix this later once we are able to remove these literals after decompiling all functions that use them.
+The `FLOAT_LABEL` macro is just shorthand for `*(f32*)&(literal)` .We can now remove the `NONMATCHING` guard block around this method as well as the `asm` definition. Just keep in mind we'll need to come back and fix this later once we are able to remove these literals after decompiling all functions that use them.
 
 ## At last, fixing the vtable order
 
@@ -1046,6 +1046,65 @@ It worked! The vtables are finally in the right order now.
 
 ![alt text](img/vtable-ordering-3.png)
 
-But we're still getting a mismatch. What else could be going on? Now it looks like one of the functions in the `.text` section is out of order. What is this `__sinit_d_a_obj_saidan_cpp` method? Let's dive into the final piece of the puzzle in the next section.
+But we're still getting a mismatch. What else could be going on? Now it looks like one of the functions in the `.text` section is out of order now, which also matters when matching. What is this `__sinit_d_a_obj_saidan_cpp` method? Let's dive into the final piece of the puzzle in the next section.
 
-## OK
+## Finally, OK
+
+When an object is created in C++, its constructor is automatically called. This makes sense during the normal execution flow of code, but what happens when a static global instance is declared? In this case the compiler generates a special method unique to the TU beginning with `__sinit__`, or "static initialization", which is called automatically by the runtime. Let's look at the asm for this method now.
+
+```as
+lbl_80CC44D4:
+/* 80CC44D4  94 21 FF F0 */	stwu r1, -0x10(r1)
+/* 80CC44D8  7C 08 02 A6 */	mflr r0
+/* 80CC44DC  90 01 00 14 */	stw r0, 0x14(r1)
+/* 80CC44E0  3C 60 80 CC */	lis r3, l_HIO@ha /* 0x80CC465C@ha */
+/* 80CC44E4  38 63 46 5C */	addi r3, r3, l_HIO@l /* 0x80CC465C@l */
+/* 80CC44E8  4B FF F8 C5 */	bl __ct__14daSaidan_HIO_cFv
+/* 80CC44EC  3C 80 80 CC */	lis r4, __dt__14daSaidan_HIO_cFv@ha /* 0x80CC4478@ha */
+/* 80CC44F0  38 84 44 78 */	addi r4, r4, __dt__14daSaidan_HIO_cFv@l /* 0x80CC4478@l */
+/* 80CC44F4  3C A0 80 CC */	lis r5, lit_3619@ha /* 0x80CC4650@ha */
+/* 80CC44F8  38 A5 46 50 */	addi r5, r5, lit_3619@l /* 0x80CC4650@l */
+/* 80CC44FC  4B FF F8 3D */	bl __register_global_object
+/* 80CC4500  80 01 00 14 */	lwz r0, 0x14(r1)
+/* 80CC4504  7C 08 03 A6 */	mtlr r0
+/* 80CC4508  38 21 00 10 */	addi r1, r1, 0x10
+/* 80CC450C  4E 80 00 20 */	blr 
+```
+
+From this we can learn a few different things.
+
+1. A global variable called `l_HIO` exists.
+1. It is an instance of `daSaidan_HIO_c`.
+1. Something called `__register_global_object` is called with the address of the global HIO instance, the address of its destructor method, and a mysterious literal named `lit_3619`.
+
+Looking about halfway through the file, we can spot both of these declarations which belong to the `.bss` section. This section is reserved for [uninitialized static variables](https://en.wikipedia.org/wiki/.bss).
+
+```C++
+/* 80CC4650-80CC465C 000008 000C+00 1/1 0/0 0/0 .bss             @3619 */
+static u8 lit_3619[12];
+
+/* 80CC465C-80CC4668 000014 000C+00 3/3 0/0 0/0 .bss             l_HIO */
+static u8 l_HIO[12];
+```
+
+We know the l_HIO is an instance of `daSaidan_HIO_c`, but what about the other data before it? Well, that's where that `__register_global_object` we saw in the `__sinit__` method comes into play. Recall that the compiler passes some information to it, which is used internally for bookkeeping and eventually cleanup. Every non-primitive static instance will be accompanied by a 12 byte block of data in the `.bss` section that the compiler generates, so we can remove this when we change the type.
+
+```C++
+static daSaidan_HIO_c l_HIO;
+```
+
+Be sure to also remove everything related to the `__sinit__` method, as the compiler will automatically generate that for us. Let's compile again and...
+
+```log
+[610] building build/dolzel2/rel/d/a/obj/d_a_obj_saidan/d_a_obj_saidan.o
+[610] creating build/dolzel2/rel/d/a/obj/d_a_obj_saidan.plf
+generating RELs from .plf
+python3 tools/makerel.py build --string-table build/dolzel2/frameworkF.str @build/plf_files build/dolzel2/main.elf
+./tp check --rels
+--- Check
+    OK
+```
+
+Success! This actor now matches the output of the ROM.
+
+## The static actor methods
